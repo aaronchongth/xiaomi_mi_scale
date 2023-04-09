@@ -85,7 +85,7 @@ def append_to_json(weight, message):
 
     # write to file
     with open(OUTPUT_FILE, 'w') as json_file:
-        json.dump(file_contents, json_file)
+        json.dump(file_contents, json_file, indent=4)
     print("Added entry {}".format(new_record))
 
 def MQTT_publish(weight, unit, mitdatetime, hasImpedance, miimpedance):
