@@ -7,7 +7,7 @@ from collections import namedtuple
 from datetime import datetime
 import functools
 import json
-import paho.mqtt.publish as publish
+# import paho.mqtt.publish as publish
 import subprocess
 import sys
 import logging
@@ -17,7 +17,7 @@ import Xiaomi_Scale_Body_Metrics
 
 DEFAULT_DEBUG_LEVEL = "INFO"
 VERSION = "0.3.5"
-
+OUTPUT_FILE = "weight.json"
 
 
 # User Config
@@ -38,15 +38,15 @@ def MQTT_discovery():
         message+= '"json_attributes_topic": "' + MQTT_PREFIX + '/' + MQTTUser.NAME + '/weight",'
         message+= '"icon": "mdi:scale-bathroom",'
         message+= '"state_class": "measurement"}'
-        publish.single(
-                        MQTT_DISCOVERY_PREFIX + '/sensor/' + MQTT_PREFIX + '/' + MQTTUser.NAME + '/config',
-                        message,
-                        retain=True,
-                        hostname=MQTT_HOST,
-                        port=MQTT_PORT,
-                        auth={'username':MQTT_USERNAME, 'password':MQTT_PASSWORD},
-                        tls=MQTT_TLS
-                    )
+        # publish.single(
+        #                 MQTT_DISCOVERY_PREFIX + '/sensor/' + MQTT_PREFIX + '/' + MQTTUser.NAME + '/config',
+        #                 message,
+        #                 retain=True,
+        #                 hostname=MQTT_HOST,
+        #                 port=MQTT_PORT,
+        #                 auth={'username':MQTT_USERNAME, 'password':MQTT_PASSWORD},
+        #                 tls=MQTT_TLS
+        #             )
     logging.info(f"MQTT Discovery Setup Completed...")
 
 def check_weight(user, weight):
@@ -56,9 +56,40 @@ def GetAge(d1):
     d1 = datetime.strptime(d1, "%Y-%m-%d")
     d2 = datetime.strptime(datetime.today().strftime('%Y-%m-%d'),'%Y-%m-%d')
     return abs((d2 - d1).days)/365
-    
+
+def append_to_json(weight, message):
+    # read file
+    file_contents = {}
+    with open(OUTPUT_FILE, 'r') as json_file:
+        file_contents = json.loads(json_file.read())
+    if file_contents is None:
+        print("file load failed")
+        return
+
+    # check if last date was the same date, and less than 60 kg
+    current_day = (datetime.utcnow() - datetime(1970,1,1)).days
+    new_record = {
+        "day": current_day,
+        "weight": weight,
+        "message": message
+    }
+
+    user = "aa_weight"
+    if weight < 60:
+        user = "ll_weight"
+    for entry in file_contents[user]:
+        if current_day == entry["day"]:
+            print("Ignoring entry for same day")
+            return
+    file_contents[user].append(new_record)
+
+    # write to file
+    with open(OUTPUT_FILE, 'w') as json_file:
+        json.dump(file_contents, json_file)
+
 def MQTT_publish(weight, unit, mitdatetime, hasImpedance, miimpedance):
     """Publishes weight data for the selected user"""
+    print("called publish")
     if unit == "lbs": calcweight = round(weight * 0.4536, 2)
     if unit == "jin": calcweight = round(weight * 0.5, 2)
     if unit == "kg": calcweight = weight
@@ -68,6 +99,7 @@ def MQTT_publish(weight, unit, mitdatetime, hasImpedance, miimpedance):
             matcheduser = user
             break
     if matcheduser is None:
+        print("didn't match")
         return
     height = matcheduser.HEIGHT
     age = GetAge(matcheduser.DOB)
@@ -75,50 +107,60 @@ def MQTT_publish(weight, unit, mitdatetime, hasImpedance, miimpedance):
     name = matcheduser.NAME
 
     lib = Xiaomi_Scale_Body_Metrics.bodyMetrics(calcweight, height, age, sex, 0)
-    message = '{'
-    message += '"weight":' + "{:.2f}".format(weight)
-    message += ',"weight_unit":"' + str(unit) + '"'
-    message += ',"bmi":' + "{:.2f}".format(lib.getBMI())
-    message += ',"basal_metabolism":' + "{:.2f}".format(lib.getBMR())
-    message += ',"visceral_fat":' + "{:.2f}".format(lib.getVisceralFat())
-
+    date = datetime.now()
+    message = '{}/{}, Weight: {}kg'.format(
+        date.day,
+        date.month,
+        weight)
     if hasImpedance:
         lib = Xiaomi_Scale_Body_Metrics.bodyMetrics(calcweight, height, age, sex, int(miimpedance))
-        bodyscale = ['Obese', 'Overweight', 'Thick-set', 'Lack-exercise', 'Balanced', 'Balanced-muscular', 'Skinny', 'Balanced-skinny', 'Skinny-muscular']
-        message += ',"lean_body_mass":' + "{:.2f}".format(lib.getLBMCoefficient())
-        message += ',"body_fat":' + "{:.2f}".format(lib.getFatPercentage())
-        message += ',"water":' + "{:.2f}".format(lib.getWaterPercentage())
-        message += ',"bone_mass":' + "{:.2f}".format(lib.getBoneMass())
-        message += ',"muscle_mass":' + "{:.2f}".format(lib.getMuscleMass())
-        message += ',"protein":' + "{:.2f}".format(lib.getProteinPercentage())
-        message += ',"body_type":"' + str(bodyscale[lib.getBodyType()]) + '"'
-        message += ',"metabolic_age":' + "{:.0f}".format(lib.getMetabolicAge())
-        message += ',"impedance":' + "{:.0f}".format(int(miimpedance))
+        message += ', Fat: {:.2f}%'.format(lib.getFatPercentage())
+    append_to_json(weight, message)
 
-    message += ',"timestamp":"' + mitdatetime + '"'
-    message += '}'
-    try:
-        logging.info(f"Publishing data to topic {MQTT_PREFIX + '/' + name + '/weight'}: {message}")
-        publish.single(
-            MQTT_PREFIX + '/' + name + '/weight',
-            message,
-            retain=MQTT_RETAIN,
-            hostname=MQTT_HOST,
-            port=MQTT_PORT,
-            auth={'username':MQTT_USERNAME, 'password':MQTT_PASSWORD},
-            tls=MQTT_TLS
-        )
-        logging.info(f"Data Published ...")
-    except Exception as error:
-        logging.error(f"Could not publish to MQTT: {error}")
-        raise
+    # message = '{'
+    # message += '"weight":' + "{:.2f}".format(weight)
+    # message += ',"weight_unit":"' + str(unit) + '"'
+    # message += ',"bmi":' + "{:.2f}".format(lib.getBMI())
+    # message += ',"basal_metabolism":' + "{:.2f}".format(lib.getBMR())
+    # message += ',"visceral_fat":' + "{:.2f}".format(lib.getVisceralFat())
+
+    # if hasImpedance:
+    #     lib = Xiaomi_Scale_Body_Metrics.bodyMetrics(calcweight, height, age, sex, int(miimpedance))
+    #     bodyscale = ['Obese', 'Overweight', 'Thick-set', 'Lack-exercise', 'Balanced', 'Balanced-muscular', 'Skinny', 'Balanced-skinny', 'Skinny-muscular']
+    #     message += ',"lean_body_mass":' + "{:.2f}".format(lib.getLBMCoefficient())
+    #     message += ',"body_fat":' + "{:.2f}".format(lib.getFatPercentage())
+    #     message += ',"water":' + "{:.2f}".format(lib.getWaterPercentage())
+    #     message += ',"bone_mass":' + "{:.2f}".format(lib.getBoneMass())
+    #     message += ',"muscle_mass":' + "{:.2f}".format(lib.getMuscleMass())
+    #     message += ',"protein":' + "{:.2f}".format(lib.getProteinPercentage())
+    #     message += ',"body_type":"' + str(bodyscale[lib.getBodyType()]) + '"'
+    #     message += ',"metabolic_age":' + "{:.0f}".format(lib.getMetabolicAge())
+    #     message += ',"impedance":' + "{:.0f}".format(int(miimpedance))
+
+    # message += ',"timestamp":"' + mitdatetime + '"'
+    # message += '}'
+    # try:
+    #     logging.info(f"Publishing data to topic {MQTT_PREFIX + '/' + name + '/weight'}: {message}")
+    #     publish.single(
+    #         MQTT_PREFIX + '/' + name + '/weight',
+    #         message,
+    #         retain=MQTT_RETAIN,
+    #         hostname=MQTT_HOST,
+    #         port=MQTT_PORT,
+    #         auth={'username':MQTT_USERNAME, 'password':MQTT_PASSWORD},
+    #         tls=MQTT_TLS
+    #     )
+    #     logging.info(f"Data Published ...")
+    # except Exception as error:
+    #     logging.error(f"Could not publish to MQTT: {error}")
+    #     raise
 
 os.system('clear')
 
 # Configuraiton...
 # Trying To Load Config From options.json (HA Add-On)
 try:
-    with open('/data/options.json') as json_file:
+    with open('/home/aaron/tools/xiaomi_mi_scale/options.json') as json_file:
         data = json.load(json_file)["options"]
         try:
             DEBUG_LEVEL = data["DEBUG_LEVEL"]
@@ -260,12 +302,12 @@ try:
             MQTT_TLS = {'ca_certs':MQTT_TLS_CACERTS, 'insecure':MQTT_TLS_INSECURE}
 
         USERS = []
-        for user in data["USERS"]:    
+        for user in data["USERS"]:
             try:
                 user = json.dumps(user)
                 user = json.loads(user, object_hook=customUserDecoder)
                 if user.GT > user.LT:
-                    raise ValueError("GT can not be larger than LT - user {user.Name}")  
+                    raise ValueError("GT can not be larger than LT - user {user.Name}")
                 USERS.append(user)
             except:
                 logging.error(f"{sys.exc_info()[1]}")
@@ -345,10 +387,10 @@ async def main(MISCALE_MAC):
         # will stop immediately.
         await stop_event.wait()
 
-        
+
 if __name__ == "__main__":
-    if MQTT_DISCOVERY:
-        MQTT_discovery()
+    # if MQTT_DISCOVERY:
+    #     MQTT_discovery()
     logging.info(f"-------------------------------------")
     logging.info(f"Initialization Completed, Waiting for Scale...")
     try:
