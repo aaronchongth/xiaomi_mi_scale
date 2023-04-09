@@ -86,10 +86,10 @@ def append_to_json(weight, message):
     # write to file
     with open(OUTPUT_FILE, 'w') as json_file:
         json.dump(file_contents, json_file)
+    print("Added entry {}".format(new_record))
 
 def MQTT_publish(weight, unit, mitdatetime, hasImpedance, miimpedance):
     """Publishes weight data for the selected user"""
-    print("called publish")
     if unit == "lbs": calcweight = round(weight * 0.4536, 2)
     if unit == "jin": calcweight = round(weight * 0.5, 2)
     if unit == "kg": calcweight = weight
