@@ -77,16 +77,21 @@ def append_to_json(weight, message):
     user = "aa_weight"
     if weight < 60:
         user = "ll_weight"
+
+    overwrote = False
     for entry in file_contents[user]:
         if current_day == entry["day"]:
-            print("Ignoring entry for same day")
-            return
-    file_contents[user].append(new_record)
+            entry["weight"] = weight
+            entry["message"] = message
+            overwrote = True
+            print("Overwriting entry for same day")
+    if not overwrote:
+        file_contents[user].append(new_record)
+        print("Added entry {}".format(new_record))
 
     # write to file
     with open(OUTPUT_FILE, 'w') as json_file:
         json.dump(file_contents, json_file, indent=4)
-    print("Added entry {}".format(new_record))
 
 def MQTT_publish(weight, unit, mitdatetime, hasImpedance, miimpedance):
     """Publishes weight data for the selected user"""
